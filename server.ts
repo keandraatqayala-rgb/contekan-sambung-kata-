@@ -20,21 +20,22 @@ db.exec(`
 
 async function seedDatabase() {
   const count = db.prepare("SELECT COUNT(*) as count FROM words").get() as { count: number };
-  if (count.count > 0) {
+  if (count.count > 1000) {
     console.log("Database already seeded with", count.count, "words.");
     return;
   }
 
   console.log("Seeding database...");
   
-  // Attempt to fetch a large Indonesian word list
-  // If fetch fails, we'll use a fallback small list to ensure the app works
   try {
+    // Using a more reliable large Indonesian word list source
     const url = "https://raw.githubusercontent.com/6/indonesian-wordlist/master/indonesian-wordlist.txt";
     const response = await fetch(url);
     if (response.ok) {
       const text = await response.text();
-      const words = text.split(/\r?\n/).map(w => w.trim().toLowerCase()).filter(w => w.length > 0);
+      const words = text.split(/\r?\n/)
+        .map(w => w.trim().toLowerCase())
+        .filter(w => w.length > 1 && /^[a-z]+$/.test(w)); // Only alphabetic words
       
       const insert = db.prepare("INSERT OR IGNORE INTO words (word) VALUES (?)");
       const insertMany = db.transaction((words) => {
@@ -48,7 +49,8 @@ async function seedDatabase() {
     }
   } catch (error) {
     console.error("Error seeding from URL, using fallback:", error);
-    const fallbackWords = ["ular", "ulasan", "unta", "usaha", "amanda", "armada", "dunia", "meja", "buku", "pensil", "sekolah", "belajar"];
+    // Fallback with a decent amount of words if fetch fails
+    const fallbackWords = ["ular", "ulasan", "unta", "usaha", "amanda", "armada", "dunia", "meja", "buku", "pensil", "sekolah", "belajar", "makan", "minum", "tidur", "lari", "jalan", "lompat", "terbang", "berenang"];
     const insert = db.prepare("INSERT OR IGNORE INTO words (word) VALUES (?)");
     fallbackWords.forEach(w => insert.run(w));
   }
@@ -64,28 +66,52 @@ async function startServer() {
 
   // API Routes
   app.get("/api/search", (req, res) => {
-    const { q, type, limit = 100 } = req.query;
-    if (!q || typeof q !== "string") {
-      return res.json([]);
-    }
-
-    const searchTerm = q.toLowerCase();
-    let query = "";
+    const { q, type, length, limit = 100 } = req.query;
+    
+    let query = "SELECT word FROM words WHERE 1=1";
     let params: any[] = [];
 
-    if (type === "start") {
-      query = "SELECT word FROM words WHERE word LIKE ? LIMIT ?";
-      params = [`${searchTerm}%`, limit];
-    } else if (type === "end") {
-      query = "SELECT word FROM words WHERE word LIKE ? LIMIT ?";
-      params = [`%${searchTerm}`, limit];
-    } else {
-      query = "SELECT word FROM words WHERE word LIKE ? LIMIT ?";
-      params = [`%${searchTerm}%`, limit];
+    if (q && typeof q === "string") {
+      const searchTerm = q.toLowerCase();
+      if (type === "start") {
+        query += " AND word LIKE ?";
+        params.push(`${searchTerm}%`);
+      } else if (type === "end") {
+        query += " AND word LIKE ?";
+        params.push(`%${searchTerm}`);
+      } else if (type === "middle") {
+        query += " AND word LIKE ?";
+        params.push(`%${searchTerm}%`);
+      } else {
+        query += " AND word LIKE ?";
+        params.push(`%${searchTerm}%`);
+      }
     }
 
-    const results = db.prepare(query).all(...params);
-    res.json(results.map((r: any) => r.word));
+    if (length) {
+      query += " AND LENGTH(word) = ?";
+      params.push(parseInt(length as string));
+    }
+
+    query += " LIMIT ?";
+    params.push(parseInt(limit as string));
+
+    try {
+      const results = db.prepare(query).all(...params);
+      res.json(results.map((r: any) => r.word));
+    } catch (err) {
+      res.status(500).json({ error: "Database error" });
+    }
+  });
+
+  app.get("/api/random", (req, res) => {
+    const result = db.prepare("SELECT word FROM words ORDER BY RANDOM() LIMIT 1").get() as { word: string };
+    res.json(result);
+  });
+
+  app.get("/api/stats", (req, res) => {
+    const count = db.prepare("SELECT COUNT(*) as count FROM words").get() as { count: number };
+    res.json(count);
   });
 
   // Vite middleware for development
