@@ -1,0 +1,5 @@
+{
+  "name": "Kamus Kata Indonesia",
+  "description": "Aplikasi pencarian kata bahasa Indonesia dengan filter huruf awal dan akhir, mendukung 80.000+ kata.",
+  "requestFramePermissions": []
+}
